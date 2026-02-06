@@ -380,58 +380,95 @@ function App() {
   const wordCountDisplay = wordCount(note);
 
   return (
-    <div className="min-h-screen flex flex-col items-center p-6">
-      {/* Simple Auth Panel always visible so you can find it even if Tailwind isn't styling */}
-      <div style={{ width: "100%", maxWidth: 900, marginBottom: 16 }}>
-        {token ? (
-          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <span>{userEmail}</span>
-            <button onClick={signOut} style={{ padding: "6px 10px", border: "1px solid #ccc", borderRadius: 8 }}>
-              Sign out
-            </button>
-          </div>
-        ) : (
-          <div style={{ border: "1px solid #ddd", padding: 12, borderRadius: 12, background: "rgba(255,255,255,0.08)" }}>
-            <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>
-              <button onClick={() => setAuthMode("login")} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ccc" }}>
-                Sign in
-              </button>
-              <button onClick={() => setAuthMode("register")} style={{ padding: "6px 10px", borderRadius: 8, border: "1px solid #ccc" }}>
-                Register
-              </button>
-            </div>
-            <form onSubmit={handleAuthSubmit} style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-              <input
-                type="email"
-                value={authEmail}
-                onChange={(e) => setAuthEmail(e.target.value)}
-                placeholder="Email"
-                required
-                style={{ flex: "1 1 220px", padding: 8, borderRadius: 8, border: "1px solid #ccc" }}
-              />
-              <input
-                type="password"
-                value={authPassword}
-                onChange={(e) => setAuthPassword(e.target.value)}
-                placeholder="Password (min 6)"
-                minLength={6}
-                required
-                style={{ flex: "1 1 220px", padding: 8, borderRadius: 8, border: "1px solid #ccc" }}
-              />
-              <button type="submit" disabled={authLoading} style={{ padding: "8px 12px", borderRadius: 8, border: "1px solid #ccc" }}>
-                {authLoading ? "Please wait..." : authMode === "login" ? "Sign in" : "Register"}
-              </button>
-            </form>
-          </div>
-        )}
+    <div className="relative min-h-screen overflow-hidden">
+      <div className="pointer-events-none absolute inset-0">
+        <div className="absolute -top-24 -left-24 h-80 w-80 rounded-full bg-pink-500/25 blur-3xl" />
+        <div className="absolute top-1/3 -right-28 h-72 w-72 rounded-full bg-blue-500/25 blur-3xl" />
+        <div className="absolute bottom-[-8rem] left-1/2 h-[26rem] w-[26rem] -translate-x-1/2 rounded-full bg-purple-500/20 blur-[140px]" />
       </div>
 
-      {/* Main Card */}
-      <div className="relative bg-white/10 backdrop-blur-xl rounded-3xl shadow-2xl p-8 w-full max-w-4xl border border-white/20 hover:shadow-pink-500/20 transition-all duration-500 hover:scale-[1.01]">
-        {/* Neon Glow Effect */}
-        <div className="absolute -inset-0.5 bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 rounded-3xl blur opacity-20 group-hover:opacity-30 transition duration-1000"></div>
-        
-        <div className="relative">
+      <div className="relative z-10 flex flex-col gap-12 px-6 py-12 lg:py-16 w-full max-w-6xl mx-auto">
+        <header className="flex flex-col gap-10 lg:flex-row lg:items-start">
+          <div className="flex-1 space-y-6">
+            <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.45em] text-slate-400 uppercase">
+              <span className="h-1.5 w-1.5 rounded-full bg-pink-400"></span>
+              Sahban • Summaries
+            </span>
+            <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl leading-tight text-slate-50 drop-shadow-[0_15px_45px_rgba(236,72,153,0.35)]">
+              Transform raw notes into polished stories powered by AI.
+            </h1>
+            <p className="max-w-2xl text-lg text-slate-300">
+              Upload PDFs, paste class notes, and receive shareable summaries with tailored tone and format. Perfect for quick study guides,
+              client updates, or project recaps—all inside a single glassy workspace inspired by the portfolio aesthetic.
+            </p>
+            <div className="flex flex-wrap items-center gap-3">
+              <button
+                className="pill-button primary"
+                type="button"
+                onClick={() => {
+                  const el = document.getElementById("summarizer-card");
+                  el?.scrollIntoView({ behavior: "smooth", block: "start" });
+                }}
+              >
+                Start summarizing
+              </button>
+              {token ? (
+                <div className="glass-panel flex items-center gap-3 rounded-full px-5 py-2 text-sm text-slate-200">
+                  <span className="truncate max-w-[160px]">{userEmail}</span>
+                  <button onClick={signOut} type="button" className="pill-button ghost px-4 py-1 text-xs uppercase tracking-[0.2em]">
+                    Sign out
+                  </button>
+                </div>
+              ) : (
+                <button className="pill-button ghost" type="button" onClick={() => setShowAuth(true)}>
+                  Sign in to sync history
+                </button>
+              )}
+            </div>
+
+            <div className="flex flex-wrap gap-6 pt-2 text-xs uppercase tracking-[0.32em] text-slate-400">
+              <div>
+                <p className="text-pink-300 text-lg font-semibold tracking-normal">Realtime AI</p>
+                <p>Gemini Flash</p>
+              </div>
+              <div>
+                <p className="text-blue-300 text-lg font-semibold tracking-normal">MERN Stack</p>
+                <p>Ready backend</p>
+              </div>
+              <div>
+                <p className="text-purple-300 text-lg font-semibold tracking-normal">History</p>
+                <p>Saved securely</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="glass-panel hidden max-w-sm flex-none flex-col gap-6 p-6 lg:flex">
+            <p className="text-sm text-slate-300">
+              "I wanted my portfolio energy inside the tools I build. This workspace keeps everything crisp, tactile, and ready for demos."
+            </p>
+            <div className="flex flex-col gap-3 text-xs uppercase tracking-[0.3em] text-slate-400">
+              <span className="text-slate-200 tracking-normal text-base font-medium">What you can do</span>
+              <span>Upload PDFs • Extract text instantly</span>
+              <span>Adjust tone & length effortlessly</span>
+              <span>Save, edit, and share summaries</span>
+            </div>
+            {!token && (
+              <button className="pill-button primary" type="button" onClick={() => setShowAuth(true)}>
+                Create free account
+              </button>
+            )}
+          </div>
+        </header>
+
+        {/* Main Card */}
+        <section
+          id="summarizer-card"
+          className="group relative glass-panel p-8 w-full shadow-2xl border-white/30 hover:shadow-pink-500/30 transition-all duration-500 hover:scale-[1.01]"
+        >
+          {/* Neon Glow Effect */}
+          <div className="pointer-events-none absolute -inset-0.5 rounded-3xl bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 opacity-20 blur-lg transition duration-700 group-hover:opacity-40" />
+
+          <div className="relative">
           {/* Header */}
           <div className="text-center mb-8">
             <h1 className="text-5xl font-black bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent drop-shadow-2xl mb-3 animate-pulse">
@@ -575,7 +612,7 @@ function App() {
                     {isSpeaking ? "⏸ Pause" : "🔊 Listen"}
                   </button>
                   <button
-                    onClick={downloadAsPDF}
+                    onClick={exportPdf}
                     className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-4 py-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg font-semibold"
                   >
                     ⬇️ Save PDF
@@ -611,8 +648,8 @@ function App() {
               <p className="text-gray-100 leading-relaxed text-lg font-light">{summary}</p>
             </div>
           )}
-        </div>
-      </div>
+          </div>
+        </section>
 
       {/* History Section */}
       {history.length > 0 && (
@@ -695,6 +732,16 @@ function App() {
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
           <form onSubmit={handleAuthSubmit} className="bg-white/10 backdrop-blur-xl p-6 rounded-2xl w-full max-w-md border border-white/20">
             <h3 className="text-xl font-bold text-white mb-4">{authMode === "login" ? "Sign in" : "Create account"}</h3>
+            <div className="flex items-center justify-between mb-4 text-sm text-slate-300">
+              <span>{authMode === "login" ? "New here?" : "Have an account?"}</span>
+              <button
+                type="button"
+                onClick={() => setAuthMode((mode) => (mode === "login" ? "register" : "login"))}
+                className="text-pink-300 hover:text-pink-200 font-medium"
+              >
+                {authMode === "login" ? "Create one" : "Sign in"}
+              </button>
+            </div>
             <input
               type="email"
               value={authEmail}
@@ -764,6 +811,7 @@ function App() {
           background: linear-gradient(to bottom, #db2777, #7c3aed);
         }
       `}</style>
+    </div>
     </div>
   );
 }
