@@ -11,7 +11,13 @@ pdfjsLib.GlobalWorkerOptions.workerSrc = new URL(
 ).toString();
 
 const genAI = new GoogleGenerativeAI(import.meta.env.VITE_GEMINI_API_KEY);
-const parseJwt = (t) => { try { return JSON.parse(atob(t.split(".")[1])); } catch { return null; } };
+const parseJwt = (token) => {
+  try {
+    return JSON.parse(atob(token.split(".")[1]));
+  } catch (_err) {
+    return null;
+  }
+};
 
 function App() {
   const DRAFT_KEY = "ai-summarizer-draft";
@@ -28,16 +34,16 @@ function App() {
   const [search, setSearch] = useState("");
   const [toast, setToast] = useState(null);
   const [editingItem, setEditingItem] = useState(null);
-  const [tone, setTone] = useState("neutral"); // neutral, formal, casual
-  const [format, setFormat] = useState("paragraph"); // paragraph, bullets
+  const [tone, setTone] = useState("neutral");
+  const [format, setFormat] = useState("paragraph");
   const [tagsInput, setTagsInput] = useState("");
-  const [_page, setPage] = useState(1); // renamed to avoid unused var warning
+  const [page, setPage] = useState(1);
   const [hasMore, setHasMore] = useState(true);
   const [token, setToken] = useState(localStorage.getItem("token"));
   const payload = token ? parseJwt(token) : null;
   const userEmail = payload?.email;
   const [showAuth, setShowAuth] = useState(false);
-  const [authMode, setAuthMode] = useState("login"); // 'login' | 'register'
+  const [authMode, setAuthMode] = useState("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authLoading, setAuthLoading] = useState(false);
@@ -45,32 +51,33 @@ function App() {
   const utteranceRef = useRef(null);
 
   useEffect(() => {
-    // load draft from localStorage
     const saved = localStorage.getItem(DRAFT_KEY);
     if (saved) setNote(saved);
-    loadHistoryPaged(true);
   }, []);
 
-  // autosave draft (debounced)
   useEffect(() => {
     clearTimeout(draftSaveTimer.current);
     draftSaveTimer.current = setTimeout(() => {
-      if (note.trim()) localStorage.setItem(DRAFT_KEY, note);
-      else localStorage.removeItem(DRAFT_KEY);
+      if (note.trim()) {
+        localStorage.setItem(DRAFT_KEY, note);
+      } else {
+        localStorage.removeItem(DRAFT_KEY);
+      }
     }, 600);
     return () => clearTimeout(draftSaveTimer.current);
   }, [note]);
 
-  // cheap helper
-  const wordCount = (txt) => (typeof txt === "string" && txt.trim() ? txt.trim().split(/\s+/).length : 0);
+  const wordCount = (value) => {
+    if (typeof value !== "string" || !value.trim()) return 0;
+    return value.trim().split(/\s+/).length;
+  };
 
-  // Copy helper (fix: was undefined)
-  const copyToClipboard = async (txt) => {
+  const copyToClipboard = async (value) => {
     try {
-      await navigator.clipboard.writeText(txt ?? "");
+      await navigator.clipboard.writeText(value ?? "");
       setToast("Copied");
     } catch (err) {
-      console.error("Copy failed:", err);
+      console.error("Copy failed", err);
       setToast("Copy failed");
     } finally {
       setTimeout(() => setToast(null), 1200);
@@ -85,8 +92,8 @@ function App() {
     return true;
   };
 
-  const handleAuthSubmit = async (_e) => {
-    _e.preventDefault();
+  const handleAuthSubmit = async (event) => {
+    event.preventDefault();
     if (!authEmail || !authPassword) return;
     setAuthLoading(true);
     try {
@@ -99,10 +106,10 @@ function App() {
         setAuthEmail("");
         setAuthPassword("");
       } else {
-        alert(res?.message || "Auth failed");
+        alert(res?.message || "Authentication failed");
       }
-    } catch (err) {
-      console.error("Auth error:", err);
+    } catch (error) {
+      console.error("Auth error", error);
       alert("Auth error");
     } finally {
       setAuthLoading(false);
@@ -114,7 +121,6 @@ function App() {
     setToken(null);
   };
 
-  // history loader kept with useCallback so hooks deps are correct
   const loadHistoryPaged = useCallback(
     async (pageToLoad = 1, reset = false) => {
       try {
@@ -127,10 +133,10 @@ function App() {
         } else {
           setHasMore(false);
         }
-      } catch (err) {
-        console.error("Failed to load history:", err);
+      } catch (error) {
+        console.error("Failed to load history", error);
         setHasMore(false);
-        setToast("Failed to load");
+        setToast("Failed to load history");
         setTimeout(() => setToast(null), 1500);
       } finally {
         setHistoryLoading(false);
@@ -139,58 +145,76 @@ function App() {
     [search]
   );
 
-  // initial load
   useEffect(() => {
+    setHistoryLoading(true);
     loadHistoryPaged(1, true);
   }, [loadHistoryPaged]);
 
-  // search -> reload first page
   useEffect(() => {
-    const t = setTimeout(() => loadHistoryPaged(1, true), 300);
-    return () => clearTimeout(t);
+    const timeout = setTimeout(() => {
+      setHistoryLoading(true);
+      loadHistoryPaged(1, true);
+    }, 300);
+    return () => clearTimeout(timeout);
   }, [search, loadHistoryPaged]);
 
-  // Summarize: allow generating without login, but only save when logged in
-  async function handleSummarize() {
-    if (note.trim() === "") return alert("Please enter some text!");
+  const deriveTags = () =>
+    tagsInput
+      .split(",")
+      .map((tag) => tag.trim())
+      .filter(Boolean);
+
+  const handleSummarize = async () => {
+    if (note.trim() === "") {
+      alert("Please enter some text");
+      return;
+    }
     setLoading(true);
     try {
       const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
-      const prompt = `Summarize the following text in a ${length} length:\n\n${note}`;
+      const prompt = `Summarize the following text in a ${length} length with a ${tone} tone and ${format} format.\n\n${note}`;
       const result = await model.generateContent(prompt);
       const response = await result.response.text();
       setSummary(response);
 
-      // save to backend only if logged in:
       if (!requireAuth()) return;
 
-      const tags = []; // keep your tags logic if you added it
+      const tags = deriveTags();
       const tempId = `temp-${Date.now()}`;
-      const tempEntry = { _id: tempId, note, summary: response, tags, starred: false, createdAt: new Date().toISOString() };
+      const tempEntry = {
+        _id: tempId,
+        note,
+        summary: response,
+        tags,
+        starred: false,
+        createdAt: new Date().toISOString(),
+      };
       setHistory((prev) => [tempEntry, ...prev]);
 
       try {
         const saved = await summaryAPI.save(note, response, tags);
-        setHistory((prev) => prev.map((it) => (it._id === tempId ? saved : it)));
+        setHistory((prev) => prev.map((item) => (item._id === tempId ? saved : item)));
         setToast("Summary saved");
         setTimeout(() => setToast(null), 1000);
         setNote("");
-        localStorage.removeItem("ai-summarizer-draft");
-      } catch (err) {
-        console.error("Save failed:", err);
+        setSummary(response);
+        setTagsInput("");
+        localStorage.removeItem(DRAFT_KEY);
+      } catch (error) {
+        console.error("Save failed", error);
         setToast("Save failed");
         setTimeout(() => setToast(null), 1500);
       }
     } catch (error) {
-      console.error("Summarize error:", error);
+      console.error("Summarization failed", error);
       setToast("Summarization failed");
       setTimeout(() => setToast(null), 1500);
     } finally {
       setLoading(false);
     }
-  }
+  };
 
-  async function extractTextFromPDF(file) {
+  const extractTextFromPDF = async (file) => {
     const reader = new FileReader();
     return new Promise((resolve, reject) => {
       reader.onload = async () => {
@@ -198,41 +222,44 @@ function App() {
           const typedArray = new Uint8Array(reader.result);
           const pdf = await pdfjsLib.getDocument({ data: typedArray }).promise;
           let textContent = "";
-          for (let i = 1; i <= pdf.numPages; i++) {
-            const page = await pdf.getPage(i);
-            const content = await page.getTextContent();
-            textContent += content.items.map((s) => s.str).join(" ") + "\n";
+          for (let pageIndex = 1; pageIndex <= pdf.numPages; pageIndex += 1) {
+            const pageData = await pdf.getPage(pageIndex);
+            const content = await pageData.getTextContent();
+            textContent += content.items.map((item) => item.str).join(" ") + "\n";
           }
           resolve(textContent);
-        } catch (err) {
-          reject(err);
+        } catch (error) {
+          reject(error);
         }
       };
       reader.onerror = reject;
       reader.readAsArrayBuffer(file);
     });
-  }
+  };
 
-  async function handlePDFUpload(e) {
-    const file = e.target.files[0];
-    if (file) {
-      setPdfLoading(true);
-      try {
-        const text = await extractTextFromPDF(file);
-        setNote(text);
-      } catch (error) {
-        console.error("PDF Error:", error);
-        alert("Failed to extract text from PDF.");
-      } finally {
-        setPdfLoading(false);
-      }
+  const handlePDFUpload = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+    setPdfLoading(true);
+    try {
+      const text = await extractTextFromPDF(file);
+      setNote(text);
+      setToast("PDF text extracted");
+      setTimeout(() => setToast(null), 1200);
+    } catch (error) {
+      console.error("PDF extraction failed", error);
+      alert("Failed to extract text from PDF");
+    } finally {
+      setPdfLoading(false);
     }
-  }
+  };
 
   const download = (blob, filename) => {
     const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url; a.download = filename; a.click();
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = filename;
+    link.click();
     URL.revokeObjectURL(url);
   };
 
@@ -249,73 +276,77 @@ function App() {
 
   const exportPdf = () => {
     const doc = new jsPDF({ unit: "pt", format: "a4" });
-    const margin = 40; let y = margin;
-    doc.setFontSize(16); doc.text("Summary", margin, y); y += 24;
+    const margin = 40;
+    let y = margin;
+    doc.setFontSize(16);
+    doc.text("Summary", margin, y);
+    y += 24;
     doc.setFontSize(12);
     const lines = doc.splitTextToSize(summary, 515);
     lines.forEach((line) => {
-      if (y > 780) { doc.addPage(); y = margin; }
-      doc.text(line, margin, y); y += 16;
+      if (y > 780) {
+        doc.addPage();
+        y = margin;
+      }
+      doc.text(line, margin, y);
+      y += 16;
     });
     doc.save("summary.pdf");
   };
 
-  // delete (syntax fixed)
-  async function handleDelete(id) {
+  const handleDelete = async (id) => {
     if (!requireAuth()) return;
-    if (!confirm("Are you sure you want to delete this summary?")) return;
+    if (!confirm("Delete this summary?")) return;
     const backup = history;
-    setHistory((prev) => prev.filter((h) => h._id !== id));
+    setHistory((prev) => prev.filter((item) => item._id !== id));
     try {
       const res = await summaryAPI.delete(id);
-      if (res?.message) setToast("Deleted");
-      setTimeout(() => setToast(null), 1200);
+      if (res?.message) {
+        setToast("Deleted");
+        setTimeout(() => setToast(null), 1200);
+      }
     } catch (error) {
-      console.error("Failed to delete:", error);
+      console.error("Delete failed", error);
       setHistory(backup);
       setToast("Delete failed");
-      setTimeout(() => setToast(null), 2000);
+      setTimeout(() => setToast(null), 1500);
     }
-  }
+  };
 
-  // open edit modal
   const openEdit = (item) => {
     setEditingItem({ ...item });
   };
 
-  // edit save (reload if API fails)
   const saveEdit = async () => {
     if (!requireAuth() || !editingItem) return;
-    const { _id, note: newNote, summary: newSummary, tags, starred } = editingItem;
-    setHistory((prev) => prev.map((it) => (it._id === _id ? { ...it, note: newNote, summary: newSummary, tags, starred } : it)));
+    const { _id, note: nextNote, summary: nextSummary, tags, starred } = editingItem;
+    setHistory((prev) => prev.map((item) => (item._id === _id ? { ...item, note: nextNote, summary: nextSummary, tags, starred } : item)));
     setEditingItem(null);
     try {
-      await summaryAPI.update(_id, newNote, newSummary, tags, starred);
+      await summaryAPI.update(_id, nextNote, nextSummary, tags, starred);
       setToast("Updated");
       setTimeout(() => setToast(null), 1200);
-    } catch (err) {
-      console.error("Update failed", err);
+    } catch (error) {
+      console.error("Update failed", error);
       setToast("Update failed");
-      setTimeout(() => setToast(null), 2000);
+      setTimeout(() => setToast(null), 1500);
       loadHistoryPaged(1, true);
     }
   };
 
-  // star toggle
-  async function toggleStar(item) {
+  const toggleStar = async (item) => {
     if (!requireAuth()) return;
     try {
       const updated = await summaryAPI.star(item._id, !item.starred);
-      setHistory((prev) => prev.map((it) => (it._id === item._id ? updated : it)));
-    } catch (err) {
-      console.error("Star toggle failed:", err);
+      setHistory((prev) => prev.map((entry) => (entry._id === item._id ? updated : entry)));
+    } catch (error) {
+      console.error("Star update failed", error);
       setToast("Failed to update");
       setTimeout(() => setToast(null), 1200);
     }
-  }
+  };
 
-  // share link
-  async function shareItem(item) {
+  const shareItem = async (item) => {
     if (!requireAuth()) return;
     try {
       const { slug } = await summaryAPI.share(item._id);
@@ -323,22 +354,21 @@ function App() {
       await navigator.clipboard.writeText(url);
       setToast("Share link copied");
       setTimeout(() => setToast(null), 1200);
-    } catch (err) {
-      console.error("Share failed:", err);
+    } catch (error) {
+      console.error("Share failed", error);
       setToast("Share failed");
       setTimeout(() => setToast(null), 1200);
     }
-  }
+  };
 
-  // keyboard shortcut: Ctrl/Cmd + Enter to summarize
-  const onTextareaKeyDown = (e) => {
-    if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
-      e.preventDefault();
+  const onTextareaKeyDown = (event) => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
       handleSummarize();
     }
   };
 
-  function handleSpeak() {
+  const handleSpeak = () => {
     const synth = window.speechSynthesis;
     if (isSpeaking) {
       synth.pause();
@@ -366,452 +396,486 @@ function App() {
     synth.speak(utterance);
     setIsSpeaking(true);
     setShowResumeOptions(false);
-  }
+  };
 
-  function restartSpeech() {
+  const restartSpeech = () => {
     window.speechSynthesis.cancel();
     setIsSpeaking(false);
     setPaused(false);
     setShowResumeOptions(false);
     handleSpeak();
-  }
+  };
 
-  // Fix: define wordCount used in JSX
   const wordCountDisplay = wordCount(note);
 
-  return (
-    <div className="relative min-h-screen overflow-hidden">
-      <div className="pointer-events-none absolute inset-0">
-        <div className="absolute -top-24 -left-24 h-80 w-80 rounded-full bg-pink-500/25 blur-3xl" />
-        <div className="absolute top-1/3 -right-28 h-72 w-72 rounded-full bg-blue-500/25 blur-3xl" />
-        <div className="absolute bottom-[-8rem] left-1/2 h-[26rem] w-[26rem] -translate-x-1/2 rounded-full bg-purple-500/20 blur-[140px]" />
-      </div>
+  const navItems = [
+    { label: "Paraphraser" },
+    { label: "Summarizer", active: true },
+    { label: "AI Chat" },
+    { label: "Grammar" },
+    { label: "Plagiarism" },
+    { label: "Citation" },
+  ];
 
-      <div className="relative z-10 flex flex-col gap-12 px-6 py-12 lg:py-16 w-full max-w-6xl mx-auto">
-        <header className="flex flex-col gap-10 lg:flex-row lg:items-start">
-          <div className="flex-1 space-y-6">
-            <span className="inline-flex items-center gap-2 text-xs font-semibold tracking-[0.45em] text-slate-400 uppercase">
-              <span className="h-1.5 w-1.5 rounded-full bg-pink-400"></span>
-              Sahban • Summaries
-            </span>
-            <h1 className="font-display text-4xl sm:text-5xl lg:text-6xl leading-tight text-slate-50 drop-shadow-[0_15px_45px_rgba(236,72,153,0.35)]">
-              Transform raw notes into polished stories powered by AI.
-            </h1>
-            <p className="max-w-2xl text-lg text-slate-300">
-              Upload PDFs, paste class notes, and receive shareable summaries with tailored tone and format. Perfect for quick study guides,
-              client updates, or project recaps—all inside a single glassy workspace inspired by the portfolio aesthetic.
-            </p>
-            <div className="flex flex-wrap items-center gap-3">
-              <button
-                className="pill-button primary"
-                type="button"
-                onClick={() => {
-                  const el = document.getElementById("summarizer-card");
-                  el?.scrollIntoView({ behavior: "smooth", block: "start" });
-                }}
-              >
-                Start summarizing
-              </button>
+  return (
+    <div className="flex min-h-screen bg-gradient-to-br from-emerald-50 via-white to-sky-50 text-slate-800">
+      <aside className="hidden w-64 flex-col border-r border-emerald-100 bg-emerald-50/60 px-6 py-10 lg:flex">
+        <h2 className="mb-8 text-lg font-semibold text-emerald-600">Workspace</h2>
+        <nav className="flex flex-col gap-2">
+          {navItems.map((item) => (
+            <button
+              key={item.label}
+              type="button"
+              className={`flex items-center justify-between rounded-xl px-4 py-3 text-sm font-semibold transition ${
+                item.active
+                  ? "bg-emerald-500 text-white shadow"
+                  : "text-emerald-700 hover:bg-emerald-100 hover:text-emerald-600"
+              }`}
+            >
+              <span>{item.label}</span>
+              {item.active ? <span className="text-xs uppercase">Live</span> : null}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-auto rounded-2xl bg-white p-4 shadow-sm">
+          <p className="text-xs font-semibold uppercase text-emerald-500">Tip</p>
+          <p className="mt-2 text-sm text-slate-600">Upload lecture slides as PDF to get structured study notes in seconds.</p>
+        </div>
+      </aside>
+
+      <div className="flex min-h-screen flex-1 flex-col">
+        <header className="border-b border-emerald-100 bg-white/90 shadow-sm backdrop-blur">
+          <div className="mx-auto flex w-full max-w-6xl items-center justify-between px-6 py-4">
+            <div className="flex items-center gap-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-500 text-sm font-semibold text-white">
+                QB
+              </div>
+              <div>
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-500">Sahban Summaries</p>
+                <p className="text-xl font-semibold text-slate-800">AI Summarizer</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-3">
               {token ? (
-                <div className="glass-panel flex items-center gap-3 rounded-full px-5 py-2 text-sm text-slate-200">
-                  <span className="truncate max-w-[160px]">{userEmail}</span>
-                  <button onClick={signOut} type="button" className="pill-button ghost px-4 py-1 text-xs uppercase tracking-[0.2em]">
+                <>
+                  <div className="hidden text-right text-sm sm:block">
+                    <p className="font-medium text-slate-700">{userEmail}</p>
+                    <button onClick={signOut} type="button" className="text-xs font-semibold text-emerald-600 underline underline-offset-4">
+                      Sign out
+                    </button>
+                  </div>
+                  <button
+                    onClick={signOut}
+                    type="button"
+                    className="rounded-full bg-emerald-500 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:bg-emerald-600 sm:hidden"
+                  >
                     Sign out
                   </button>
-                </div>
+                </>
               ) : (
-                <button className="pill-button ghost" type="button" onClick={() => setShowAuth(true)}>
-                  Sign in to sync history
+                <button
+                  onClick={() => setShowAuth(true)}
+                  type="button"
+                  className="rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-emerald-600"
+                >
+                  Sign in
                 </button>
               )}
             </div>
-
-            <div className="flex flex-wrap gap-6 pt-2 text-xs uppercase tracking-[0.32em] text-slate-400">
-              <div>
-                <p className="text-pink-300 text-lg font-semibold tracking-normal">Realtime AI</p>
-                <p>Gemini Flash</p>
-              </div>
-              <div>
-                <p className="text-blue-300 text-lg font-semibold tracking-normal">MERN Stack</p>
-                <p>Ready backend</p>
-              </div>
-              <div>
-                <p className="text-purple-300 text-lg font-semibold tracking-normal">History</p>
-                <p>Saved securely</p>
-              </div>
-            </div>
-          </div>
-
-          <div className="glass-panel hidden max-w-sm flex-none flex-col gap-6 p-6 lg:flex">
-            <p className="text-sm text-slate-300">
-              "I wanted my portfolio energy inside the tools I build. This workspace keeps everything crisp, tactile, and ready for demos."
-            </p>
-            <div className="flex flex-col gap-3 text-xs uppercase tracking-[0.3em] text-slate-400">
-              <span className="text-slate-200 tracking-normal text-base font-medium">What you can do</span>
-              <span>Upload PDFs • Extract text instantly</span>
-              <span>Adjust tone & length effortlessly</span>
-              <span>Save, edit, and share summaries</span>
-            </div>
-            {!token && (
-              <button className="pill-button primary" type="button" onClick={() => setShowAuth(true)}>
-                Create free account
-              </button>
-            )}
           </div>
         </header>
 
-        {/* Main Card */}
-        <section
-          id="summarizer-card"
-          className="group relative glass-panel p-8 w-full shadow-2xl border-white/30 hover:shadow-pink-500/30 transition-all duration-500 hover:scale-[1.01]"
-        >
-          {/* Neon Glow Effect */}
-          <div className="pointer-events-none absolute -inset-0.5 rounded-3xl bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 opacity-20 blur-lg transition duration-700 group-hover:opacity-40" />
-
-          <div className="relative">
-          {/* Header */}
-          <div className="text-center mb-8">
-            <h1 className="text-5xl font-black bg-gradient-to-r from-pink-400 via-purple-400 to-blue-400 bg-clip-text text-transparent drop-shadow-2xl mb-3 animate-pulse">
-              🧠 AI Note Summarizer
-            </h1>
-            <p className="text-gray-300 text-lg font-light tracking-wide">
-              Transform your notes into powerful summaries with AI magic ✨
-            </p>
-          </div>
-
-          {/* Controls Bar */}
-          <div className="flex justify-between items-center mb-6 bg-white/5 backdrop-blur-sm rounded-2xl p-4 border border-white/10">
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-semibold text-purple-300">📝 Words:</span>
-              <span className="px-3 py-1 bg-gradient-to-r from-pink-500/20 to-purple-500/20 rounded-full text-white font-bold border border-pink-500/30">
-                {wordCountDisplay}
-              </span>
-            </div>
-            <div className="flex items-center gap-3">
-              <span className="text-sm font-semibold text-purple-300">Length:</span>
-              <select
-                value={length}
-                onChange={(e) => setLength(e.target.value)}
-                className="bg-white/10 backdrop-blur-sm text-white px-4 py-2 rounded-xl outline-none focus:ring-2 focus:ring-pink-400 border border-white/20 cursor-pointer hover:bg-white/20 transition"
-              >
-                <option value="short" className="bg-gray-800">Short</option>
-                <option value="medium" className="bg-gray-800">Medium</option>
-                <option value="detailed" className="bg-gray-800">Detailed</option>
-              </select>
-            </div>
-          </div>
-
-          {/* PDF Upload */}
-          <div className="mb-6">
-            <label className="block w-full cursor-pointer group">
-              <div className="bg-gradient-to-r from-purple-500/10 to-pink-500/10 backdrop-blur-sm border-2 border-dashed border-purple-400/40 rounded-2xl p-6 text-center hover:border-pink-400/60 hover:bg-white/10 transition-all duration-300">
-                <span className="text-purple-300 group-hover:text-pink-300 font-semibold text-lg">
-                  📄 Click to upload PDF or drag & drop
-                </span>
-              </div>
-              <input
-                type="file"
-                accept="application/pdf"
-                onChange={handlePDFUpload}
-                className="hidden"
-              />
-            </label>
-            {pdfLoading && (
-              <p className="text-yellow-300 mt-3 text-center animate-pulse font-semibold">
-                ⚡ Extracting magic from your PDF...
-              </p>
-            )}
-          </div>
-
-          {/* Textarea */}
-          <textarea
-            className="w-full h-48 p-5 rounded-2xl bg-white/5 backdrop-blur-sm text-white placeholder-gray-400 outline-none focus:ring-2 focus:ring-pink-400 border border-white/10 resize-none font-light text-lg leading-relaxed hover:bg-white/10 transition-all"
-            placeholder="✍️ Paste your notes here or upload a PDF above..."
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            onKeyDown={onTextareaKeyDown}
-          ></textarea>
-
-          {/* Tone, Format, Tags controls */}
-          <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-4">
-            {/* Tone Selector */}
-            <div className="flex flex-col">
-              <label className="text-sm font-semibold text-purple-300 mb-2">Tone</label>
-              <select
-                value={tone}
-                onChange={(e) => setTone(e.target.value)}
-                className="bg-white/10 backdrop-blur-sm text-white px-4 py-2 rounded-xl outline-none focus:ring-2 focus:ring-pink-400 border border-white/20 cursor-pointer hover:bg-white/20 transition"
-              >
-                <option value="neutral" className="bg-gray-800">Neutral</option>
-                <option value="formal" className="bg-gray-800">Formal</option>
-                <option value="casual" className="bg-gray-800">Casual</option>
-              </select>
-            </div>
-
-            {/* Format Selector */}
-            <div className="flex flex-col">
-              <label className="text-sm font-semibold text-purple-300 mb-2">Format</label>
-              <select
-                value={format}
-                onChange={(e) => setFormat(e.target.value)}
-                className="bg-white/10 backdrop-blur-sm text-white px-4 py-2 rounded-xl outline-none focus:ring-2 focus:ring-pink-400 border border-white/20 cursor-pointer hover:bg-white/20 transition"
-              >
-                <option value="paragraph" className="bg-gray-800">Paragraph</option>
-                <option value="bullets" className="bg-gray-800">Bullets</option>
-              </select>
-            </div>
-
-            {/* Tags Input */}
-            <div className="flex flex-col">
-              <label className="text-sm font-semibold text-purple-300 mb-2">Tags</label>
-              <input
-                type="text"
-                value={tagsInput}
-                onChange={(e) => setTagsInput(e.target.value)}
-                placeholder="Enter tags, separated by commas"
-                className="bg-white/10 backdrop-blur-sm text-white px-4 py-2 rounded-xl outline-none focus:ring-2 focus:ring-pink-400 border border-white/20"
-              />
-            </div>
-          </div>
-
-          {/* Summarize Button */}
-          <button
-            onClick={handleSummarize}
-            disabled={loading}
-            className={`mt-6 w-full py-4 rounded-2xl font-bold text-lg transition-all duration-300 shadow-2xl ${
-              loading
-                ? "bg-gray-600 cursor-not-allowed"
-                : "bg-gradient-to-r from-pink-500 via-purple-500 to-blue-500 hover:from-pink-600 hover:via-purple-600 hover:to-blue-600 hover:shadow-pink-500/50 hover:scale-[1.02] active:scale-95"
-            }`}
-          >
-            {loading ? (
-              <span className="flex items-center justify-center gap-2">
-                <span className="animate-spin">⚡</span> Creating Magic...
-              </span>
-            ) : (
-              "✨ Summarize Now"
-            )}
-          </button>
-
-          {/* Summary Output */}
-          {summary && (
-            <div className="mt-8 bg-gradient-to-br from-white/10 to-white/5 backdrop-blur-lg p-6 rounded-2xl border border-white/20 animate-fade-in shadow-xl">
-              <div className="flex justify-between items-center mb-4">
-                <h2 className="text-2xl font-bold bg-gradient-to-r from-pink-300 to-purple-300 bg-clip-text text-transparent">
-                  🎯 Your Summary
-                </h2>
-                <div className="flex gap-3">
-                  <button
-                    onClick={handleSpeak}
-                    className={`${
-                      isSpeaking
-                        ? "bg-gradient-to-r from-red-500 to-pink-500"
-                        : "bg-gradient-to-r from-purple-500 to-pink-500"
-                    } text-white px-4 py-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg font-semibold`}
-                  >
-                    {isSpeaking ? "⏸ Pause" : "🔊 Listen"}
-                  </button>
-                  <button
-                    onClick={exportPdf}
-                    className="bg-gradient-to-r from-green-500 to-emerald-500 hover:from-green-600 hover:to-emerald-600 text-white px-4 py-2 rounded-xl transition-all hover:scale-105 active:scale-95 shadow-lg font-semibold"
-                  >
-                    ⬇️ Save PDF
-                  </button>
+        <main className="flex-1 overflow-y-auto">
+          <section className="bg-gradient-to-b from-white to-emerald-50/60">
+            <div className="mx-auto flex max-w-6xl flex-col gap-12 px-6 py-12 lg:flex-row lg:items-center">
+              <div className="flex-1 space-y-4">
+                <h1 className="text-4xl font-semibold text-slate-900 sm:text-5xl">Free AI Summarizer</h1>
+                <p className="text-lg text-slate-600">Condense articles, reports, and study material into clear takeaways instantly. Paste text or upload a PDF, choose your tone, and let the AI deliver key points while preserving context.</p>
+                <div className="grid gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                  <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+                    <p className="font-semibold text-emerald-600">Instant results</p>
+                    <p className="mt-1 text-slate-500">Gemini Flash condenses long-form content in seconds.</p>
+                  </div>
+                  <div className="rounded-2xl border border-emerald-100 bg-white p-4 shadow-sm">
+                    <p className="font-semibold text-emerald-600">Flexible outputs</p>
+                    <p className="mt-1 text-slate-500">Switch between paragraph and bullet formats anytime.</p>
+                  </div>
                 </div>
               </div>
 
-              {showResumeOptions && (
-                <div className="flex gap-3 mb-4">
-                  <button
-                    onClick={restartSpeech}
-                    className="bg-gradient-to-r from-blue-500 to-cyan-500 text-white px-4 py-2 rounded-xl transition-all hover:scale-105 shadow-lg font-semibold"
-                  >
-                    🔁 Restart
-                  </button>
-                  <button
-                    onClick={handleSpeak}
-                    className="bg-gradient-to-r from-yellow-500 to-orange-500 text-white px-4 py-2 rounded-xl transition-all hover:scale-105 shadow-lg font-semibold"
-                  >
-                    ▶️ Continue
-                  </button>
-                </div>
-              )}
-
-              <div className="flex gap-3 mt-4">
-                <button onClick={() => copyToClipboard(summary)} className="bg-blue-500 text-white px-4 py-2 rounded-xl">📋 Copy</button>
-                <button onClick={() => { navigator.clipboard.writeText(note); setToast("Note copied"); setTimeout(()=>setToast(null), 1200); }} className="bg-gray-700 text-white px-4 py-2 rounded-xl">✏️ Copy Note</button>
-                <button onClick={exportTxt} className="bg-gray-700 text-white px-4 py-2 rounded-xl">Export .txt</button>
-                <button onClick={exportMd} className="bg-gray-700 text-white px-4 py-2 rounded-xl">Export .md</button>
-                <button onClick={exportPdf} className="bg-gray-700 text-white px-4 py-2 rounded-xl">Export .pdf</button>
-              </div>
-
-              <p className="text-gray-100 leading-relaxed text-lg font-light">{summary}</p>
-            </div>
-          )}
-          </div>
-        </section>
-
-      {/* History Section */}
-      {history.length > 0 && (
-        <div className="relative mt-10 bg-white/10 backdrop-blur-xl p-8 rounded-3xl w-full max-w-4xl border border-white/20 shadow-2xl">
-          <div className="flex items-center justify-between mb-6">
-            <h2 className="text-3xl font-bold bg-gradient-to-r from-pink-300 to-purple-300 bg-clip-text text-transparent">🕒 Summary History</h2>
-            <div className="flex gap-2">
-              <input
-                value={search}
-                onChange={(e) => { setSearch(e.target.value); /* optional live server search: loadHistory(e.target.value) */}}
-                placeholder="Search history..."
-                className="px-3 py-2 rounded-lg bg-white/5 text-white outline-none border border-white/10"
-              />
-              <button onClick={() => { setSearch(""); loadHistoryPaged(1, true); }} className="px-3 py-2 rounded-lg bg-purple-600 text-white">Reset</button>
-            </div>
-          </div>
-
-          {historyLoading ? (
-            <p className="text-center text-gray-300 animate-pulse">Loading your history...</p>
-          ) : (
-            <>
-              <ul className="space-y-4 max-h-96 overflow-y-auto pr-2 custom-scrollbar">
-                {history.map((item) => (
-                  <li key={item._id} className="bg-white/5 backdrop-blur-sm p-5 rounded-2xl border border-white/10 hover:bg-white/10 hover:border-pink-400/30 transition-all duration-300 hover:scale-[1.01] group">
-                    <div className="flex justify-between items-start gap-4">
-                      <div className="flex-1">
-                        <div className="flex items-center justify-between gap-3">
-                          <p className="text-sm text-purple-300 mb-2 font-semibold">📝 Note:</p>
-                          <div className="flex gap-2">
-                            <button onClick={() => toggleStar(item)} className={`text-sm px-2 py-1 rounded-md ${item.starred ? "bg-yellow-500/90" : "bg-gray-800/60"}`}>
-                              {item.starred ? "★ Starred" : "☆ Star"}
-                            </button>
-                            <button onClick={() => shareItem(item)} className="text-sm px-2 py-1 bg-blue-600/80 rounded-md">Share</button>
-                            <button onClick={() => copyToClipboard(item.summary)} className="text-sm px-2 py-1 bg-gray-800/60 rounded-md">Copy</button>
-                          </div>
-                        </div>
-                        <p className="text-gray-300 mb-3 text-sm line-clamp-2">{item.note.slice(0, 200)}{item.note.length > 200 ? "..." : ""}</p>
-                        <p className="text-sm text-pink-300 mb-2 font-semibold">✨ Summary:</p>
-                        <p className="text-gray-100 text-sm leading-relaxed">{item.summary}</p>
-                      </div>
-                      <button onClick={(_e) => handleDelete(item._id)} className="bg-gradient-to-r from-red-500 to-pink-500 hover:from-red-600 hover:to-pink-600 text-white px-3 py-2 rounded-xl transition-all hover:scale-110 active:scale-95 shadow-lg opacity-100 font-semibold">🗑️</button>
+              <div className="w-full max-w-xl">
+                <div className="rounded-3xl border border-emerald-100 bg-white p-8 shadow-xl">
+                  <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+                    <div>
+                      <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-500">Current session</p>
+                      <p className="text-2xl font-semibold text-slate-900">Summarizer</p>
                     </div>
-                    {item.tags?.length ? (
-                      <div className="mt-2 flex flex-wrap gap-2">
-                        {item.tags.map(t => <span key={t} className="text-xs bg-white/10 border border-white/10 rounded-full px-2 py-1">{t}</span>)}
+                    <div className="rounded-full bg-emerald-100 px-4 py-1 text-sm font-semibold text-emerald-600">
+                      {wordCountDisplay} words
+                    </div>
+                  </div>
+
+                  <div className="flex flex-wrap gap-3 rounded-2xl bg-emerald-50 px-4 py-3 text-sm text-emerald-700">
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Length</span>
+                      <select
+                        value={length}
+                        onChange={(event) => setLength(event.target.value)}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-700 outline-none transition hover:border-emerald-300"
+                      >
+                        <option value="short">Short</option>
+                        <option value="medium">Medium</option>
+                        <option value="detailed">Detailed</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Tone</span>
+                      <select
+                        value={tone}
+                        onChange={(event) => setTone(event.target.value)}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-700 outline-none transition hover:border-emerald-300"
+                      >
+                        <option value="neutral">Neutral</option>
+                        <option value="formal">Formal</option>
+                        <option value="casual">Casual</option>
+                      </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span className="font-semibold">Format</span>
+                      <select
+                        value={format}
+                        onChange={(event) => setFormat(event.target.value)}
+                        className="rounded-lg border border-emerald-200 bg-white px-3 py-2 text-sm font-medium text-emerald-700 outline-none transition hover:border-emerald-300"
+                      >
+                        <option value="paragraph">Paragraph</option>
+                        <option value="bullets">Bullets</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  <label className="mt-6 block cursor-pointer rounded-2xl border border-dashed border-emerald-200 bg-emerald-50 px-6 py-6 text-center text-sm text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-100">
+                    <input type="file" accept="application/pdf" onChange={handlePDFUpload} className="hidden" />
+                    <p className="text-lg font-semibold text-emerald-700">Paste or upload</p>
+                    <p className="mt-1 text-slate-500">Drop your PDF here or click to browse</p>
+                    {pdfLoading && <p className="mt-3 text-sm font-semibold text-emerald-600">Extracting text...</p>}
+                  </label>
+
+                  <textarea
+                    className="mt-6 h-40 w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-slate-700 shadow-inner outline-none transition focus:border-emerald-400 focus:bg-white"
+                    placeholder="Paste your content here and press Summarize"
+                    value={note}
+                    onChange={(event) => setNote(event.target.value)}
+                    onKeyDown={onTextareaKeyDown}
+                  />
+
+                  <div className="mt-4">
+                    <label className="text-sm font-semibold text-emerald-700">Tags</label>
+                    <input
+                      type="text"
+                      value={tagsInput}
+                      onChange={(event) => setTagsInput(event.target.value)}
+                      placeholder="research, finals, client update"
+                      className="mt-2 w-full rounded-2xl border border-emerald-200 bg-white px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
+                    />
+                  </div>
+
+                  <div className="mt-4 flex items-center justify-between text-xs text-slate-500">
+                    <span>Ctrl/Cmd + Enter to summarize</span>
+                    <span className="font-semibold text-emerald-600">Free plan</span>
+                  </div>
+
+                  <div className="mt-6 flex gap-3">
+                    <button
+                      onClick={handleSummarize}
+                      disabled={loading}
+                      className={`flex-1 rounded-xl bg-emerald-500 px-5 py-3 text-sm font-semibold text-white shadow-lg transition hover:bg-emerald-600 ${
+                        loading ? "cursor-not-allowed opacity-70" : ""
+                      }`}
+                    >
+                      {loading ? "Summarizing..." : "Summarize"}
+                    </button>
+                    {summary && (
+                      <button
+                        type="button"
+                        onClick={() => copyToClipboard(summary)}
+                        className="rounded-xl border border-emerald-200 px-5 py-3 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50"
+                      >
+                        Copy
+                      </button>
+                    )}
+                  </div>
+
+                  {summary && (
+                    <div className="mt-6 space-y-4 rounded-2xl border border-emerald-100 bg-emerald-50/80 p-5">
+                      <div className="flex flex-wrap items-center justify-between gap-3">
+                        <div>
+                          <p className="text-lg font-semibold text-emerald-700">Summary</p>
+                          <p className="text-xs text-slate-500">Listen, edit, or export below</p>
+                        </div>
+                        <div className="flex flex-wrap gap-2">
+                          <button
+                            onClick={handleSpeak}
+                            className={`rounded-full px-4 py-2 text-sm font-semibold text-white transition ${
+                              isSpeaking ? "bg-rose-500 hover:bg-rose-600" : "bg-emerald-500 hover:bg-emerald-600"
+                            }`}
+                          >
+                            {isSpeaking ? "Pause audio" : "Listen"}
+                          </button>
+                          <button onClick={exportPdf} className="rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white transition hover:bg-slate-700">
+                            Download PDF
+                          </button>
+                        </div>
                       </div>
-                    ) : null}
-                  </li>
-                ))}
-              </ul>
-              {hasMore && (
-                <div className="mt-4 flex justify-center">
-                  <button onClick={() => loadHistoryPaged(false)} className="px-4 py-2 bg-white/10 border border-white/20 rounded-lg text-white">
-                    Load more
-                  </button>
+
+                      {showResumeOptions && (
+                        <div className="flex gap-3">
+                          <button onClick={restartSpeech} className="rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-white hover:bg-emerald-600">
+                            Restart
+                          </button>
+                          <button onClick={handleSpeak} className="rounded-full bg-amber-500 px-4 py-2 text-sm font-semibold text-white hover:bg-amber-600">
+                            Continue
+                          </button>
+                        </div>
+                      )}
+
+                      <div className="flex flex-wrap gap-2 text-sm">
+                        <button onClick={exportTxt} className="rounded-full border border-emerald-200 px-3 py-1 text-emerald-600 transition hover:border-emerald-300">
+                          Export TXT
+                        </button>
+                        <button onClick={exportMd} className="rounded-full border border-emerald-200 px-3 py-1 text-emerald-600 transition hover:border-emerald-300">
+                          Export MD
+                        </button>
+                        <button onClick={exportPdf} className="rounded-full border border-emerald-200 px-3 py-1 text-emerald-600 transition hover:border-emerald-300">
+                          Export PDF
+                        </button>
+                      </div>
+
+                      <p className="text-sm leading-relaxed text-slate-700">{summary}</p>
+                    </div>
+                  )}
                 </div>
-              )}
-            </>
+              </div>
+            </div>
+          </section>
+
+          <section className="border-t border-b border-emerald-100 bg-white">
+            <div className="mx-auto flex max-w-6xl flex-col gap-8 px-6 py-12 lg:flex-row lg:items-center lg:justify-between">
+              <div className="flex-1">
+                <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-500">Trusted tools</p>
+                <h2 className="mt-2 text-3xl font-semibold text-slate-900">Featured in classrooms, clinics, and consulting teams</h2>
+                <p className="mt-3 text-sm text-slate-600">Keep your workflow familiar with a clean workspace, smart defaults, and one-click exports for PDF, TXT, or Markdown.</p>
+              </div>
+              <div className="grid flex-1 gap-3 text-sm text-slate-600 sm:grid-cols-2">
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                  <p className="font-semibold text-emerald-600">Save time</p>
+                  <p className="mt-1 text-slate-500">Average summaries appear in under five seconds.</p>
+                </div>
+                <div className="rounded-2xl border border-emerald-100 bg-emerald-50 p-4">
+                  <p className="font-semibold text-emerald-600">Stay organized</p>
+                  <p className="mt-1 text-slate-500">Search and star important recaps for quick revisits.</p>
+                </div>
+              </div>
+            </div>
+          </section>
+
+          {history.length > 0 && (
+            <section id="history-section" className="bg-gradient-to-b from-white to-emerald-50/60">
+              <div className="mx-auto max-w-6xl px-6 py-12">
+                <div className="flex flex-wrap items-center justify-between gap-4">
+                  <div>
+                    <p className="text-xs font-semibold uppercase tracking-[0.3em] text-emerald-500">Saved work</p>
+                    <h2 className="mt-2 text-3xl font-semibold text-slate-900">Summary history</h2>
+                    <p className="mt-1 text-sm text-slate-600">Return to previous recaps anytime, export again, or fine-tune the copy.</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    <input
+                      value={search}
+                      onChange={(event) => setSearch(event.target.value)}
+                      placeholder="Search summaries"
+                      className="rounded-full border border-emerald-200 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
+                    />
+                    <button
+                      onClick={() => {
+                        setSearch("");
+                        setHistoryLoading(true);
+                        loadHistoryPaged(1, true);
+                      }}
+                      className="rounded-full border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50"
+                    >
+                      Reset
+                    </button>
+                  </div>
+                </div>
+
+                <div className="mt-8 rounded-3xl border border-emerald-100 bg-white p-6 shadow">
+                  {historyLoading ? (
+                    <p className="text-center text-sm text-slate-500">Loading your history...</p>
+                  ) : (
+                    <>
+                      <ul className="space-y-4">
+                        {history.map((item) => (
+                          <li key={item._id} className="rounded-2xl border border-emerald-100 p-5 shadow-sm transition hover:border-emerald-300 hover:shadow">
+                            <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                              <div className="space-y-3">
+                                <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-[0.2em] text-emerald-500">
+                                  <span>Note</span>
+                                  <span className="hidden sm:inline-block">-</span>
+                                  <span className="text-slate-500">{new Date(item.createdAt).toLocaleString()}</span>
+                                </div>
+                                <p className="line-clamp-2 text-sm text-slate-600">{item.note.slice(0, 240)}{item.note.length > 240 ? "..." : ""}</p>
+                                <div className="space-y-1">
+                                  <div className="flex items-center justify-between">
+                                    <p className="text-xs font-semibold uppercase tracking-[0.2em] text-emerald-500">Summary</p>
+                                    <button onClick={() => openEdit(item)} className="text-xs font-semibold text-emerald-600">Edit</button>
+                                  </div>
+                                  <p className="text-sm leading-relaxed text-slate-700">{item.summary}</p>
+                                </div>
+                                {item.tags?.length ? (
+                                  <div className="flex flex-wrap gap-2">
+                                    {item.tags.map((tag) => (
+                                      <span key={tag} className="rounded-full border border-emerald-200 px-3 py-1 text-xs font-semibold text-emerald-600">
+                                        {tag}
+                                      </span>
+                                    ))}
+                                  </div>
+                                ) : null}
+                              </div>
+                              <div className="flex flex-wrap items-center gap-2">
+                                <button
+                                  onClick={() => toggleStar(item)}
+                                  className={`rounded-full px-3 py-1 text-sm font-semibold transition ${
+                                    item.starred
+                                      ? "bg-amber-100 text-amber-600"
+                                      : "border border-emerald-200 text-emerald-600 hover:border-emerald-300"
+                                  }`}
+                                >
+                                  {item.starred ? "Starred" : "Star"}
+                                </button>
+                                <button
+                                  onClick={() => shareItem(item)}
+                                  className="rounded-full border border-emerald-200 px-3 py-1 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300"
+                                >
+                                  Share
+                                </button>
+                                <button
+                                  onClick={() => copyToClipboard(item.summary)}
+                                  className="rounded-full border border-emerald-200 px-3 py-1 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300"
+                                >
+                                  Copy
+                                </button>
+                                <button
+                                  onClick={() => handleDelete(item._id)}
+                                  className="rounded-full bg-rose-500 px-3 py-1 text-sm font-semibold text-white transition hover:bg-rose-600"
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                      {hasMore && (
+                        <div className="mt-6 flex justify-center">
+                          <button
+                            onClick={() => loadHistoryPaged(page, false)}
+                            className="rounded-full border border-emerald-200 px-5 py-2 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50"
+                          >
+                            Load more
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            </section>
           )}
+        </main>
+
+        <footer className="border-t border-emerald-100 bg-white/90">
+          <div className="mx-auto flex max-w-6xl flex-col gap-4 px-6 py-8 text-sm text-slate-500 sm:flex-row sm:items-center sm:justify-between">
+            <p>Built with React, Tailwind, Gemini AI, and a secure MERN backend.</p>
+            <p>Copyright {new Date().getFullYear()} Sahban Summaries</p>
+          </div>
+        </footer>
+      </div>
+
+      {toast && (
+        <div className="fixed right-6 top-6 z-50 rounded-full bg-slate-900 px-4 py-2 text-sm font-semibold text-white shadow-lg">
+          {toast}
         </div>
       )}
 
-      {/* Edit Modal */}
       {editingItem && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <div className="bg-white/5 backdrop-blur-lg p-6 rounded-xl w-full max-w-2xl border border-white/20">
-            <h3 className="text-xl mb-3 font-bold">Edit Summary</h3>
-            <textarea className="w-full h-32 p-3 rounded mb-3 bg-white/5 text-white outline-none" value={editingItem.note} onChange={(e) => setEditingItem({ ...editingItem, note: e.target.value })}></textarea>
-            <textarea className="w-full h-32 p-3 rounded mb-3 bg-white/5 text-white outline-none" value={editingItem.summary} onChange={(e) => setEditingItem({ ...editingItem, summary: e.target.value })}></textarea>
-            <div className="flex justify-end gap-3">
-              <button onClick={() => setEditingItem(null)} className="px-4 py-2 rounded bg-gray-600">Cancel</button>
-              <button onClick={saveEdit} className="px-4 py-2 rounded bg-green-500">Save</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4">
+          <div className="w-full max-w-2xl space-y-4 rounded-3xl border border-emerald-100 bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-slate-900">Edit summary</h3>
+              <button onClick={() => setEditingItem(null)} className="text-sm font-semibold text-slate-500">Close</button>
+            </div>
+            <textarea
+              className="h-32 w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
+              value={editingItem.note}
+              onChange={(event) => setEditingItem({ ...editingItem, note: event.target.value })}
+            />
+            <textarea
+              className="h-32 w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
+              value={editingItem.summary}
+              onChange={(event) => setEditingItem({ ...editingItem, summary: event.target.value })}
+            />
+            <div className="flex justify-end gap-2">
+              <button onClick={() => setEditingItem(null)} className="rounded-full border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50">
+                Cancel
+              </button>
+              <button onClick={saveEdit} className="rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600">
+                Save changes
+              </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Auth Modal */}
       {showAuth && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50">
-          <form onSubmit={handleAuthSubmit} className="bg-white/10 backdrop-blur-xl p-6 rounded-2xl w-full max-w-md border border-white/20">
-            <h3 className="text-xl font-bold text-white mb-4">{authMode === "login" ? "Sign in" : "Create account"}</h3>
-            <div className="flex items-center justify-between mb-4 text-sm text-slate-300">
-              <span>{authMode === "login" ? "New here?" : "Have an account?"}</span>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 px-4">
+          <form onSubmit={handleAuthSubmit} className="w-full max-w-md space-y-4 rounded-3xl border border-emerald-100 bg-white p-6 shadow-xl">
+            <div className="flex items-center justify-between">
+              <h3 className="text-xl font-semibold text-slate-900">{authMode === "login" ? "Sign in" : "Create account"}</h3>
               <button
                 type="button"
                 onClick={() => setAuthMode((mode) => (mode === "login" ? "register" : "login"))}
-                className="text-pink-300 hover:text-pink-200 font-medium"
+                className="text-sm font-semibold text-emerald-600"
               >
-                {authMode === "login" ? "Create one" : "Sign in"}
+                {authMode === "login" ? "Need an account?" : "Have an account?"}
               </button>
             </div>
             <input
               type="email"
               value={authEmail}
-              onChange={(e) => setAuthEmail(e.target.value)}
+              onChange={(event) => setAuthEmail(event.target.value)}
               placeholder="Email"
-              className="w-full mb-3 px-3 py-2 rounded bg-white/5 text-white border border-white/10"
+              className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
               required
             />
             <input
               type="password"
               value={authPassword}
-              onChange={(e) => setAuthPassword(e.target.value)}
+              onChange={(event) => setAuthPassword(event.target.value)}
               placeholder="Password"
-              className="w-full mb-4 px-3 py-2 rounded bg-white/5 text-white border border-white/10"
               minLength={6}
+              className="w-full rounded-2xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-sm text-slate-700 outline-none transition focus:border-emerald-400"
               required
             />
             <div className="flex justify-end gap-2">
-              <button type="button" onClick={() => setShowAuth(false)} className="px-3 py-2 rounded bg-gray-600 text-white">Cancel</button>
-              <button type="submit" disabled={authLoading} className="px-3 py-2 rounded bg-purple-600 text-white">
+              <button type="button" onClick={() => setShowAuth(false)} className="rounded-full border border-emerald-200 px-4 py-2 text-sm font-semibold text-emerald-600 transition hover:border-emerald-300 hover:bg-emerald-50">
+                Cancel
+              </button>
+              <button type="submit" disabled={authLoading} className="rounded-full bg-emerald-500 px-5 py-2 text-sm font-semibold text-white transition hover:bg-emerald-600">
                 {authLoading ? "Please wait..." : authMode === "login" ? "Sign in" : "Register"}
               </button>
             </div>
           </form>
         </div>
       )}
-
-      {/* Footer */}
-      <footer className="mt-8 text-gray-400 text-sm font-light">
-        Made with <span className="text-pink-400">❤️</span> using React, Tailwind, Gemini AI & MongoDB
-      </footer>
-
-      <style>{`
-        @keyframes blob {
-          0%, 100% { transform: translate(0, 0) scale(1); }
-          33% { transform: translate(30px, -50px) scale(1.1); }
-          66% { transform: translate(-20px, 20px) scale(0.9); }
-        }
-        .animate-blob {
-          animation: blob 7s infinite;
-        }
-        .animation-delay-2000 {
-          animation-delay: 2s;
-        }
-        .animation-delay-4000 {
-          animation-delay: 4s;
-        }
-        .animate-fade-in {
-          animation: fadeIn 0.5s ease-in;
-        }
-        @keyframes fadeIn {
-          from { opacity: 0; transform: translateY(10px); }
-          to { opacity: 1; transform: translateY(0); }
-        }
-        .custom-scrollbar::-webkit-scrollbar {
-          width: 8px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-track {
-          background: rgba(255, 255, 255, 0.1);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb {
-          background: linear-gradient(to bottom, #ec4899, #8b5cf6);
-          border-radius: 10px;
-        }
-        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
-          background: linear-gradient(to bottom, #db2777, #7c3aed);
-        }
-      `}</style>
-    </div>
     </div>
   );
 }
